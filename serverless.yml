@@ -1,0 +1,74 @@
+service: ms-analitico
+
+frameworkVersion: "4"
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-east-1
+  stage: ${opt:stage, "dev"}
+  memorySize: 512
+  timeout: 29
+  architecture: x86_64
+  environment:
+    SERVICIO: ${self:service}
+    SNS_TOPIC_ARN: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
+    TABLA_EVENTOS_PROCESADOS: ${cf:infra-compartida-${sls:stage}.TablaEventosProcesados}
+    BUCKET_DATALAKE: ${cf:infra-compartida-${sls:stage}.BucketDatalake}
+  # AWS Academy no permite crear roles IAM: se reusa LabRole.
+  # En una cuenta propia, borra la linea `role:` y descomenta los permisos,
+  # que son los minimos que este microservicio necesita.
+  iam:
+    role: arn:aws:iam::${aws:accountId}:role/LabRole
+    # role:
+    #   statements:
+  #     - Effect: Allow
+  #       Action:
+  #         - sns:Publish
+  #       Resource: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
+  #     - Effect: Allow
+  #       Action:
+  #         - dynamodb:PutItem
+  #       Resource: ${cf:infra-compartida-${sls:stage}.TablaEventosProcesadosArn}
+  #     - Effect: Allow
+  #       Action:
+  #         - s3:PutObject
+  #         - s3:GetObject
+  #         - s3:ListBucket
+  #       Resource:
+  #         - ${cf:infra-compartida-${sls:stage}.BucketDatalakeArn}
+  #         - ${cf:infra-compartida-${sls:stage}.BucketDatalakeArn}/*
+  #
+package:
+  individually: false
+  patterns:
+    - "!**"
+    - "src/**"
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    slim: true
+  autorizador:
+    # El authorizer vive en infra-compartida y lo comparten los 6 microservicios
+    name: autorizadorCompartido
+    type: request
+    arn: ${cf:infra-compartida-${sls:stage}.AutorizadorArn}
+    resultTtlInSeconds: 300
+    identitySource: method.request.header.Authorization
+
+functions:
+  health:
+    handler: src/handlers/health.manejar
+    events:
+      - http:
+          path: /health
+          method: get
+          cors: true
+          authorizer: ${self:custom.autorizador}
+
+  # TODO(Osomar1705): tus endpoints van aqui. Minimo 5 protegidos.
+  # Copia el bloque de health y cambia path/method/handler.
