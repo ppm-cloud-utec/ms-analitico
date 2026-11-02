@@ -15,6 +15,8 @@ provider:
     SNS_TOPIC_ARN: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
     TABLA_EVENTOS_PROCESADOS: ${cf:infra-compartida-${sls:stage}.TablaEventosProcesados}
     BUCKET_DATALAKE: ${cf:infra-compartida-${sls:stage}.BucketDatalake}
+    SNS_ALERTAS_ARN: ${cf:infra-compartida-${sls:stage}.SnsAlertasArn}
+    TABLA_AGREGADOS: ${self:service}-agregados-${sls:stage}
   # AWS Academy no permite crear roles IAM: se reusa LabRole.
   # En una cuenta propia, borra la linea `role:` y descomenta los permisos,
   # que son los minimos que este microservicio necesita.
@@ -61,14 +63,136 @@ custom:
     identitySource: method.request.header.Authorization
 
 functions:
+
   health:
     handler: src/handlers/health.manejar
     events:
-      - http:
-          path: /health
-          method: get
-          cors: true
-          authorizer: ${self:custom.autorizador}
+      - http: { path: "/health", method: get, cors: true, authorizer: "${self:custom.autorizador}" }
 
-  # TODO(Osomar1705): tus endpoints van aqui. Minimo 5 protegidos.
-  # Copia el bloque de health y cambia path/method/handler.
+  kpis:
+    handler: src/handlers/kpis.resumen
+    description: El dashboard ejecutivo, desde los agregados
+    events:
+      - http: { path: "/kpis", method: get, cors: true, authorizer: "${self:custom.autorizador}" }
+
+  serie:
+    handler: src/handlers/kpis.serie
+    description: Evolucion mes a mes para los graficos
+    events:
+      - http: { path: "/kpis/serie", method: get, cors: true, authorizer: "${self:custom.autorizador}" }
+
+  eventos:
+    handler: src/handlers/kpis.eventos
+    description: Asoma el data lake crudo en S3 - la prueba visible del EDA
+    events:
+      - http: { path: "/eventos", method: get, cors: true, authorizer: "${self:custom.autorizador}" }
+
+  # ---------- Consumidores de eventos (EDA) ----------
+
+  ingesta:
+    handler: src/handlers/ingesta.manejar
+    description: TODOS los eventos -> S3 + agregados
+    timeout: 60
+    events:
+      - sqs:
+          arn: !GetAtt ColaAnalitico.Arn
+          batchSize: 10
+
+  notificador:
+    handler: src/handlers/notificador.manejar
+    description: Eventos de riesgo -> topic ppm-alertas
+    timeout: 30
+    events:
+      - sqs:
+          arn: !GetAtt ColaAlertas.Arn
+          batchSize: 10
+
+resources:
+  Resources:
+
+    # Agregados del dashboard. S3 es la fuente de verdad; esto es la vista
+    # rapida, porque Athena tarda segundos y se cobra por byte escaneado.
+    TablaAgregados:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-agregados-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          # pk = TENANT#<tid> · sk = PERIODO#2026-11 o PERIODO#TOTAL
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+
+    # ---------- Cola de ingesta: SIN filtro, ve todo el trafico ----------
+    ColaAnalitico:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ppm-cola-analitico-${sls:stage}
+        VisibilityTimeout: 120
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt ColaAnaliticoDLQ.Arn
+          maxReceiveCount: 3
+
+    ColaAnaliticoDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ppm-cola-analitico-dlq-${sls:stage}
+        MessageRetentionPeriod: 1209600
+
+    SuscripcionAnalitico:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
+        Protocol: sqs
+        Endpoint: !GetAtt ColaAnalitico.Arn
+        # Sin FilterPolicy a proposito: el data lake archiva TODO.
+
+    # ---------- Cola de alertas: solo los eventos de riesgo ----------
+    ColaAlertas:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ppm-cola-alertas-${sls:stage}
+        VisibilityTimeout: 60
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt ColaAlertasDLQ.Arn
+          maxReceiveCount: 3
+
+    ColaAlertasDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ppm-cola-alertas-dlq-${sls:stage}
+        MessageRetentionPeriod: 1209600
+
+    SuscripcionAlertas:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
+        Protocol: sqs
+        Endpoint: !GetAtt ColaAlertas.Arn
+        FilterPolicy:
+          tipo:
+            - presupuesto.excedido
+            - recurso.sobreasignado
+
+    PermisoSnsEnColas:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ColaAnalitico
+          - !Ref ColaAlertas
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: { Service: sns.amazonaws.com }
+              Action: sqs:SendMessage
+              Resource: "*"
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
