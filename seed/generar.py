@@ -10,8 +10,13 @@ en los ultimos 12 meses.
 A diferencia de los otros microservicios, aqui los "registros" son objetos en
 S3. Para no hacer 30,000 PutObject (que tomaria horas), los eventos se agrupan
 en archivos JSON Lines por particion: un objeto por tenant/fecha/tipo con
-muchos eventos dentro. Athena lee JSON Lines igual de bien, y el conteo real de
-eventos se verifica con --contar.
+muchos eventos dentro. Athena lee JSON Lines igual de bien.
+
+IMPORTANTE: el seed BORRA el prefijo del tenant antes de escribir. La clave
+lleva el numero de eventos de la particion (historico-NNNN.json), asi que si
+dos corridas reparten distinto quedarian los dos objetos y el tenant acabaria
+con mas eventos de los que dice tener. Borrar primero es lo que garantiza que
+el conteo final sea exactamente 10,000 por tenant.
 """
 import os
 import sys
@@ -20,6 +25,7 @@ import uuid
 import random
 import argparse
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -103,6 +109,26 @@ def aplanar(evento):
     return plano
 
 
+def limpiar(tenant_id, s3):
+    """Borra los objetos del tenant. Sin esto una recarga acumula duplicados."""
+    prefijo = f"eventos/tenant_id={tenant_id}/"
+    borrados, token = 0, None
+    while True:
+        args = {"Bucket": BUCKET, "Prefix": prefijo, "MaxKeys": 1000}
+        if token:
+            args["ContinuationToken"] = token
+        r = s3.list_objects_v2(**args)
+        claves = [{"Key": o["Key"]} for o in r.get("Contents", [])]
+        if claves:
+            # delete_objects borra hasta 1000 por llamada
+            s3.delete_objects(Bucket=BUCKET, Delete={"Objects": claves})
+            borrados += len(claves)
+        if not r.get("IsTruncated"):
+            break
+        token = r["NextContinuationToken"]
+    return borrados
+
+
 def generar(tenant_id, perfil, s3, tabla):
     hoy = date.today()
     tipos = list(MEZCLA)
@@ -149,13 +175,19 @@ def generar(tenant_id, perfil, s3, tabla):
             elif tipo == "presupuesto.excedido":
                 c["presupuestos_excedidos"] += 1
 
-    # Un objeto JSON Lines por particion
-    for (fecha, tipo), eventos in particiones.items():
+    # Un objeto JSON Lines por particion, subidos EN PARALELO.
+    # De a uno, 3,000 PutObject sobre la red tardan varios minutos y la carga
+    # se queda a medias si algo la interrumpe.
+    def subir(item):
+        (fecha, tipo), eventos = item
         clave = (f"eventos/tenant_id={tenant_id}/fecha={fecha}/tipo={tipo}/"
                  f"historico-{len(eventos):04d}.json")
         cuerpo = "\n".join(json.dumps(e, ensure_ascii=False) for e in eventos) + "\n"
         s3.put_object(Bucket=BUCKET, Key=clave, Body=cuerpo.encode(),
                       ContentType="application/json")
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        list(pool.map(subir, particiones.items()))
     print(f"    {len(particiones)} objetos en S3 con {EVENTOS_POR_TENANT} eventos")
 
     for periodo, c in contadores.items():
@@ -219,6 +251,9 @@ def main():
     print(f"Bucket: {BUCKET}\nTabla:  {TABLA}\n")
     for tenant_id, perfil in objetivo.items():
         print(f"== {perfil['nombre']} ({tenant_id}) ==")
+        n = limpiar(tenant_id, s3)
+        if n:
+            print(f"    {n} objetos previos borrados")
         total += generar(tenant_id, perfil, s3, tabla)
         print()
     print(f"Listo: {total} eventos. Verifica con --contar")

@@ -141,11 +141,19 @@ real del sistema:
 Hay muchas más tareas que proyectos y muy pocas alertas, que es como se ve el
 tráfico de un sistema real.
 
-> **Nota sobre el seed:** hacer 30,000 `PutObject` tomaría horas. El seed agrupa
+> **Nota sobre el seed.** Hacer 30,000 `PutObject` tomaría horas. El seed agrupa
 > los eventos de cada partición en un objeto **JSON Lines** (muchos eventos, un
-> archivo), que Athena lee igual de bien. El conteo real de eventos se verifica
-> con `--contar`. Los eventos que llegan en vivo durante la demo sí se escriben
-> de a uno, para que se vean apareciendo.
+> archivo), que Athena lee igual de bien, y los sube con 32 hilos en paralelo:
+> ~2,000 objetos por tenant en menos de un minuto.
+>
+> **El seed borra el prefijo del tenant antes de escribir.** La clave lleva el
+> número de eventos de la partición (`historico-NNNN.json`), así que dos
+> corridas que repartan distinto dejarían los dos objetos y el tenant acabaría
+> con más eventos de los que dice tener — pasó: Acme llegó a acumular 16,556 en
+> vez de 10,000. Borrar primero es lo que garantiza el conteo exacto.
+>
+> Los eventos que llegan en vivo durante la demo sí se escriben de a uno, para
+> que se vean apareciendo.
 
 ## Cargar los datos
 
