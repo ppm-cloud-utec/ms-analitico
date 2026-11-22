@@ -1,14 +1,4 @@
-"""Escritura en el data lake de S3 y lectura de los agregados.
-
-Los eventos crudos van a S3 particionados por tenant y fecha, que es la fuente
-de Athena para el analisis historico. Pero el dashboard NO lee de Athena: una
-consulta de Athena tarda segundos y se cobra por byte escaneado, y un panel que
-se refresca cada minuto no puede depender de eso.
-
-Por eso el worker mantiene en paralelo una tabla de AGREGADOS en DynamoDB con
-los contadores ya sumados. S3 sigue siendo la fuente de verdad; DynamoDB es la
-vista rapida.
-"""
+"""Escritura en el data lake de S3 y lectura de los agregados."""
 import os
 import json
 from datetime import datetime, timezone
@@ -28,11 +18,7 @@ def agregados():
 
 
 def ruta(tenant_id, tipo, ocurrido_en, evento_id):
-    """Particionado por tenant y fecha: es lo que hace que Athena escanee
-    solo los dias consultados en vez del bucket entero.
-
-        tenant_id=t-acme/fecha=2026-11-01/tipo=tarea.completada/<id>.json
-    """
+    """Clave del evento, particionada por tenant, fecha y tipo."""
     fecha = ocurrido_en[:10]
     return (f"eventos/tenant_id={tenant_id}/fecha={fecha}/"
             f"tipo={tipo}/{evento_id}.json")
@@ -53,9 +39,7 @@ def guardar_evento(evento):
 
 
 def aplanar(evento):
-    """Deja el evento en una sola capa: Athena sobre JSON anidado es incomodo
-    y los campos de `datos` cambian segun el tipo.
-    """
+    """Aplana el evento a una sola capa para Athena."""
     plano = {
         "evento_id": evento["evento_id"],
         "tipo": evento["tipo"],
@@ -71,11 +55,7 @@ def aplanar(evento):
 
 
 def sumar(tenant_id, periodo, contadores):
-    """Incrementa los contadores del periodo de forma atomica.
-
-    periodo es "2026-11" (mes) o "TOTAL". ADD en DynamoDB es atomico, asi que
-    dos lotes de SQS procesandose a la vez no se pisan.
-    """
+    """Incrementa los contadores del periodo de forma atomica."""
     partes = ", ".join(f"#{k} :{k}" for k in contadores)
     return agregados().update_item(
         Key={"pk": f"TENANT#{tenant_id}", "sk": f"PERIODO#{periodo}"},

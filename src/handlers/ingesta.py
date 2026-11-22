@@ -1,17 +1,9 @@
-"""Worker de ingesta: TODOS los eventos del sistema entran por aqui.
-
-Su cola esta suscrita al topic sin filtro, asi que ve el trafico completo. Hace
-dos cosas con cada evento:
-
-  1. lo guarda crudo en S3 (la fuente de verdad del data lake)
-  2. suma sus contadores en la tabla de agregados (la vista rapida del panel)
-"""
+"""Worker de ingesta: TODOS los eventos del sistema entran por aqui."""
 import json
 
 from src import lago
 from src.idempotencia import liberar, ya_procesado
 
-# Que contador suma cada tipo de evento. Lo que no esta aqui solo se archiva.
 CONTADORES = {
     "proyecto.creado":       lambda d: {"proyectos_creados": 1,
                                         "presupuesto_comprometido": d.get("presupuesto_estimado", 0)},
@@ -38,8 +30,6 @@ def manejar(event, context):
             continue
 
         try:
-            # La clave en S3 es el evento_id: reescribirlo en un reintento es
-            # inofensivo.
             lago.guardar_evento(evento)
             archivados += 1
 
@@ -48,12 +38,10 @@ def manejar(event, context):
                 contadores = constructor(evento.get("datos") or {})
                 contadores["eventos"] = 1
                 mes = (evento.get("ocurrido_en") or "")[:7] or "sin-fecha"
-                # Dos periodos: el mes (para la serie de tiempo) y el acumulado
                 lago.sumar(evento["tenant_id"], mes, contadores)
                 lago.sumar(evento["tenant_id"], "TOTAL", contadores)
                 sumados += 1
         except Exception:
-            # Sin esto el evento quedaba marcado y el reintento lo descartaba.
             liberar(evento["evento_id"])
             raise
 

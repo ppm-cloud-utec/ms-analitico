@@ -1,14 +1,9 @@
 service: ms-analitico
 
-# Se usa la v3 a proposito: la v4 exige una cuenta de serverless.com y un
-# SERVERLESS_ACCESS_KEY para cada deploy. La v3 solo necesita credenciales
-# de AWS, que es lo unico que da el Learner Lab.
 frameworkVersion: "3"
 
 provider:
   name: aws
-  # Usa la API Gateway unica de infra-compartida en vez de crear una
-  # propia. Todas las rutas de este servicio viven bajo /analitico.
   apiGateway:
     restApiId: ${cf:infra-compartida-${sls:stage}.ApiId}
     restApiRootResourceId: ${cf:infra-compartida-${sls:stage}.ApiRootResourceId}
@@ -25,30 +20,8 @@ provider:
     BUCKET_DATALAKE: ${cf:infra-compartida-${sls:stage}.BucketDatalake}
     SNS_ALERTAS_ARN: ${cf:infra-compartida-${sls:stage}.SnsAlertasArn}
     TABLA_AGREGADOS: ${self:service}-agregados-${sls:stage}
-  # AWS Academy no permite crear roles IAM: se reusa LabRole.
-  # En una cuenta propia, borra la linea `role:` y descomenta los permisos,
-  # que son los minimos que este microservicio necesita.
   iam:
     role: arn:aws:iam::${aws:accountId}:role/LabRole
-    # role:
-    #   statements:
-  #     - Effect: Allow
-  #       Action:
-  #         - sns:Publish
-  #       Resource: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
-  #     - Effect: Allow
-  #       Action:
-  #         - dynamodb:PutItem
-  #       Resource: ${cf:infra-compartida-${sls:stage}.TablaEventosProcesadosArn}
-  #     - Effect: Allow
-  #       Action:
-  #         - s3:PutObject
-  #         - s3:GetObject
-  #         - s3:ListBucket
-  #       Resource:
-  #         - ${cf:infra-compartida-${sls:stage}.BucketDatalakeArn}
-  #         - ${cf:infra-compartida-${sls:stage}.BucketDatalakeArn}/*
-  #
 package:
   individually: false
   patterns:
@@ -60,18 +33,10 @@ plugins:
 
 custom:
   pythonRequirements:
-    # true, no "non-linux": en Linux "non-linux" NO usa Docker y busca un
-    # binario python3.12 local, que no existe (el sistema trae 3.14).
-    # Forzar Docker ademas garantiza que psycopg se compile contra Amazon
-    # Linux, que es donde corre la Lambda.
     dockerizePip: true
     slim: true
-    # Cache propio por repo. El cache global de ~/.cache lo comparten todos
-    # los servicios, y si dos despliegues corren a la vez un contenedor lo
-    # deja en root:root mientras el otro lo lee -> EACCES.
     cacheLocation: ./.serverless-cache
   autorizador:
-    # Registrado una sola vez en la API compartida (infra-compartida).
     type: CUSTOM
     authorizerId: ${cf:infra-compartida-${sls:stage}.AutorizadorApiId}
 
@@ -123,8 +88,6 @@ functions:
 resources:
   Resources:
 
-    # Agregados del dashboard. S3 es la fuente de verdad; esto es la vista
-    # rapida, porque Athena tarda segundos y se cobra por byte escaneado.
     TablaAgregados:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -142,7 +105,6 @@ resources:
           - AttributeName: sk
             KeyType: RANGE
 
-    # ---------- Cola de ingesta: SIN filtro, ve todo el trafico ----------
     ColaAnalitico:
       Type: AWS::SQS::Queue
       Properties:
@@ -166,7 +128,6 @@ resources:
         Endpoint: !GetAtt ColaAnalitico.Arn
         # Sin FilterPolicy a proposito: el data lake archiva TODO.
 
-    # ---------- Cola de alertas: solo los eventos de riesgo ----------
     ColaAlertas:
       Type: AWS::SQS::Queue
       Properties:
@@ -209,5 +170,4 @@ resources:
               Condition:
                 ArnEquals:
                   aws:SourceArn: ${cf:infra-compartida-${sls:stage}.SnsEventosArn}
-
 

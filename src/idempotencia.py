@@ -1,8 +1,4 @@
-"""Control de eventos ya procesados.
-
-SQS entrega at-least-once: el mismo evento puede llegar dos veces. Sin esto, el
-% de avance y la ejecucion presupuestal se inflan y en la demo no cuadran.
-"""
+"""Control de eventos ya procesados."""
 import os
 import time
 
@@ -14,14 +10,7 @@ TTL_DIAS = 30
 
 
 def liberar(evento_id):
-    """Quita la marca de un evento cuyo efecto fallo.
-
-    ya_procesado() marca ANTES de hacer el trabajo, para que dos entregas
-    simultaneas del mismo mensaje no lo procesen dos veces. Pero si el trabajo
-    falla despues de marcar, el reintento de SQS veria la marca y descartaria
-    el evento: se perderia sin dejar rastro. Llamar a esto antes de relanzar
-    el error deja que el reintento lo procese de verdad.
-    """
+    """Quita la marca de un evento cuyo efecto fallo."""
     _tabla.delete_item(Key={"evento_id": evento_id})
 
 

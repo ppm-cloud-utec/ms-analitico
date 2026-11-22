@@ -1,9 +1,4 @@
-"""Worker de alertas: convierte eventos de riesgo en notificaciones al PMO.
-
-Su cola filtra solo presupuesto.excedido y recurso.sobreasignado. Publica un
-mensaje legible en el topic ppm-alertas, al que se puede suscribir un correo
-sin tocar codigo.
-"""
+"""Worker de alertas: convierte eventos de riesgo en notificaciones al PMO."""
 import os
 import json
 
@@ -40,8 +35,6 @@ def manejar(event, context):
         sobre = json.loads(registro["body"])
         evento = json.loads(sobre["Message"]) if "Message" in sobre else sobre
 
-        # Clave distinta a la de ingesta: el mismo evento se archiva Y se
-        # notifica, son dos efectos independientes.
         if ya_procesado(f"alerta:{evento['evento_id']}"):
             omitidas += 1
             continue
@@ -59,7 +52,6 @@ def manejar(event, context):
                 },
             )
         except Exception:
-            # Si SNS falla, la alerta no salio: hay que dejarla reintentable.
             liberar(f"alerta:{evento['evento_id']}")
             raise
         enviadas += 1

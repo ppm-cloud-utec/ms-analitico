@@ -1,23 +1,5 @@
 #!/usr/bin/env python3
-"""Carga 30,000 eventos historicos en el data lake de S3 y sus agregados.
-
-    python seed/generar.py            # los 3 tenants
-    python seed/generar.py --contar
-
-Reparto: 10,000 eventos por tenant, de los 8 tipos del catalogo, distribuidos
-en los ultimos 12 meses.
-
-A diferencia de los otros microservicios, aqui los "registros" son objetos en
-S3. Para no hacer 30,000 PutObject (que tomaria horas), los eventos se agrupan
-en archivos JSON Lines por particion: un objeto por tenant/fecha/tipo con
-muchos eventos dentro. Athena lee JSON Lines igual de bien.
-
-IMPORTANTE: el seed BORRA el prefijo del tenant antes de escribir. La clave
-lleva el numero de eventos de la particion (historico-NNNN.json), asi que si
-dos corridas reparten distinto quedarian los dos objetos y el tenant acabaria
-con mas eventos de los que dice tener. Borrar primero es lo que garantiza que
-el conteo final sea exactamente 10,000 por tenant.
-"""
+"""Carga 30,000 eventos historicos en el data lake de S3 y sus agregados."""
 import os
 import sys
 import json
@@ -43,8 +25,6 @@ TENANTS = {
     "t-initech": dict(nombre="Initech Software",  proyectos=25,  monto=(10_000, 60_000)),
 }
 
-# Proporcion de cada tipo: hay muchas mas tareas que proyectos, y muy pocas
-# alertas. Es la forma que tiene el trafico real del sistema.
 MEZCLA = {
     "tarea.creada":          0.34,
     "tarea.completada":      0.30,
@@ -175,9 +155,6 @@ def generar(tenant_id, perfil, s3, tabla):
             elif tipo == "presupuesto.excedido":
                 c["presupuestos_excedidos"] += 1
 
-    # Un objeto JSON Lines por particion, subidos EN PARALELO.
-    # De a uno, 3,000 PutObject sobre la red tardan varios minutos y la carga
-    # se queda a medias si algo la interrumpe.
     def subir(item):
         (fecha, tipo), eventos = item
         clave = (f"eventos/tenant_id={tenant_id}/fecha={fecha}/tipo={tipo}/"

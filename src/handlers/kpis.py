@@ -1,14 +1,4 @@
-"""El dashboard ejecutivo: las 4 preguntas del producto en una pantalla.
-
-    1. En que estamos gastando y cuanto queda?
-    2. Quien esta sobrecargado?
-    3. Que proyecto se va a caer?
-    4. Que priorizamos el proximo trimestre?
-
-Lee de la tabla de agregados (DynamoDB), que el worker de ingesta mantiene al
-dia. No consulta Athena: una consulta de Athena tarda segundos y se cobra por
-byte escaneado, y un panel no puede depender de eso.
-"""
+"""El dashboard ejecutivo: las 4 preguntas del producto en una pantalla."""
 from datetime import datetime, timezone
 
 from boto3.dynamodb.conditions import Key
@@ -82,11 +72,7 @@ def serie(event, context):
 
 
 def eventos(event, context):
-    """GET /eventos?tipo=&fecha= — asoma el data lake crudo.
-
-    Es la prueba visible de que los eventos llegan a S3. En la demo se abre
-    esto despues de completar una tarea y se ve el objeto recien escrito.
-    """
+    """GET /eventos?tipo=&fecha= — asoma el data lake crudo."""
     import boto3
     s3 = boto3.client("s3")
 
