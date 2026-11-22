@@ -9,7 +9,7 @@ dos cosas con cada evento:
 import json
 
 from src import lago
-from src.idempotencia import ya_procesado
+from src.idempotencia import liberar, ya_procesado
 
 # Que contador suma cada tipo de evento. Lo que no esta aqui solo se archiva.
 CONTADORES = {
@@ -37,17 +37,24 @@ def manejar(event, context):
             omitidos += 1
             continue
 
-        lago.guardar_evento(evento)
-        archivados += 1
+        try:
+            # La clave en S3 es el evento_id: reescribirlo en un reintento es
+            # inofensivo.
+            lago.guardar_evento(evento)
+            archivados += 1
 
-        constructor = CONTADORES.get(evento["tipo"])
-        if constructor:
-            contadores = constructor(evento.get("datos") or {})
-            contadores["eventos"] = 1
-            mes = (evento.get("ocurrido_en") or "")[:7] or "sin-fecha"
-            # Dos periodos: el mes (para la serie de tiempo) y el acumulado
-            lago.sumar(evento["tenant_id"], mes, contadores)
-            lago.sumar(evento["tenant_id"], "TOTAL", contadores)
-            sumados += 1
+            constructor = CONTADORES.get(evento["tipo"])
+            if constructor:
+                contadores = constructor(evento.get("datos") or {})
+                contadores["eventos"] = 1
+                mes = (evento.get("ocurrido_en") or "")[:7] or "sin-fecha"
+                # Dos periodos: el mes (para la serie de tiempo) y el acumulado
+                lago.sumar(evento["tenant_id"], mes, contadores)
+                lago.sumar(evento["tenant_id"], "TOTAL", contadores)
+                sumados += 1
+        except Exception:
+            # Sin esto el evento quedaba marcado y el reintento lo descartaba.
+            liberar(evento["evento_id"])
+            raise
 
     return {"archivados": archivados, "sumados": sumados, "omitidos": omitidos}

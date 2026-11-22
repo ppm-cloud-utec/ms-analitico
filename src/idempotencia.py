@@ -13,6 +13,18 @@ _tabla = boto3.resource("dynamodb").Table(os.environ["TABLA_EVENTOS_PROCESADOS"]
 TTL_DIAS = 30
 
 
+def liberar(evento_id):
+    """Quita la marca de un evento cuyo efecto fallo.
+
+    ya_procesado() marca ANTES de hacer el trabajo, para que dos entregas
+    simultaneas del mismo mensaje no lo procesen dos veces. Pero si el trabajo
+    falla despues de marcar, el reintento de SQS veria la marca y descartaria
+    el evento: se perderia sin dejar rastro. Llamar a esto antes de relanzar
+    el error deja que el reintento lo procese de verdad.
+    """
+    _tabla.delete_item(Key={"evento_id": evento_id})
+
+
 def ya_procesado(evento_id):
     """Marca el evento como procesado. Devuelve True si ya lo estaba."""
     try:

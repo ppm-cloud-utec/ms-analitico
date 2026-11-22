@@ -9,7 +9,7 @@ import json
 
 import boto3
 
-from src.idempotencia import ya_procesado
+from src.idempotencia import liberar, ya_procesado
 
 _sns = boto3.client("sns")
 TOPIC_ALERTAS = os.environ["SNS_ALERTAS_ARN"]
@@ -47,16 +47,21 @@ def manejar(event, context):
             continue
 
         asunto, cuerpo = _mensaje(evento)
-        _sns.publish(
-            TopicArn=TOPIC_ALERTAS,
-            Subject=asunto[:100],
-            Message=cuerpo,
-            MessageAttributes={
-                "tenant_id": {"DataType": "String",
-                              "StringValue": evento["tenant_id"]},
-                "tipo": {"DataType": "String", "StringValue": evento["tipo"]},
-            },
-        )
+        try:
+            _sns.publish(
+                TopicArn=TOPIC_ALERTAS,
+                Subject=asunto[:100],
+                Message=cuerpo,
+                MessageAttributes={
+                    "tenant_id": {"DataType": "String",
+                                  "StringValue": evento["tenant_id"]},
+                    "tipo": {"DataType": "String", "StringValue": evento["tipo"]},
+                },
+            )
+        except Exception:
+            # Si SNS falla, la alerta no salio: hay que dejarla reintentable.
+            liberar(f"alerta:{evento['evento_id']}")
+            raise
         enviadas += 1
 
     return {"enviadas": enviadas, "omitidas": omitidas}
